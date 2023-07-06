@@ -1,1 +1,1 @@
-# granta_frog
+# Repository for data related to River Granta
