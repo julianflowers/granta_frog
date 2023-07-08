@@ -1,0 +1,274 @@
+---
+title: "River Granta"
+format: 
+   html:
+       toc: true
+
+editor: visual
+execute: 
+  cache: false
+  echo: false
+  message: false
+  warning: false
+  eval: false
+---
+
+## Course of the River Granta
+
+```{r}
+#| echo: false
+#| message: false
+#| label: libraries
+#| results: hide
+#| eval: true
+
+library(pacman)
+ 
+needs(tidyverse, sf, here, tmap, leaflet, leaflet.extras, mapview)
+```
+
+```{r, eval=FALSE}
+
+#| eval: false
+
+p <- here("/Users/julianflowers/Library/CloudStorage/GoogleDrive-julian.flowers12@gmail.com")
+
+f <- list.files(p,full.names = TRUE)
+
+f
+
+rivers <- read_sf(f[2])
+
+lr |>
+  mutate(area = st_area(lr))
+
+lr |>
+  ggplot() +
+  geom_sf() +
+  coord_sf()
+
+st_crop(lr, rivers) |>
+  # ggplot() +
+  # geom_sf() +
+  # coord_sf()
+  # head()
+  mapview()
+
+
+
+```
+
+```{r}
+
+#| echo: false
+#| fig-cap: "Course of the River Granta"
+#| eval: false
+
+
+library(ggspatial)
+
+linton_buffer <- st_geometry(st_point(c(0.2777, 52.0978))) |>
+  st_as_sf( crs = 4326) |>
+  st_buffer(1000) |>
+  st_transform(27700)
+linton_buffer |>
+  mutate(area = st_area(linton_buffer))
+
+mapview(linton_buffer, col.regions = "black")
+```
+
+```{r}
+#| eval: false
+cam <- rivers |>
+  filter(str_detect(name1, "Granta|River Cam|River Bourn"), 
+         !str_detect(name1, "Camel")) |>
+  st_crop(st_bbox(linton_buffer))
+
+cam_buffer <- st_buffer(cam, 50)
+
+mapview(cam_buffer) 
+
+lr_crop <- lr |>
+  st_filter(cam_buffer) 
+
+
+lr_area <- lr_crop |>
+  mutate(area = st_area(lr_crop), 
+         area = units::set_units(x = area, ha))|>
+  arrange(-area)
+
+river_corridor <- st_filter(lr, lr_area) 
+
+river_corridor |>
+  mutate(area = st_area(river_corridor), 
+         area = units::set_units(x = area, ha)) |>
+  arrange(-area) |>
+  select(INSPIREID, area) |>
+  mutate(cumarea = cumsum(area), 
+         totarea = sum(area), 
+         proparea = cumarea / totarea) |>
+  #top_n(180) |>
+  mapview() +
+  mapview(cam, col.region = "red")
+
+river_corridor|>
+  mapview() +
+  mapview(cam, col.region = "red")
+
+
+```
+
+```{r}
+#| eval: false
+
+leaflet() %>% 
+    addProviderTiles(providers$Esri.WorldStreetMap) %>%
+  addResetMapButton() %>%
+  addSearchOSM()
+
+```
+
+## Catchment of the River Granta
+
+From https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810
+
+```{r, eval=TRUE}
+
+mapviewOptions(basemaps = c("OpenTopoMap", "OpenStreetMap"))
+
+f <- "/Users/julianflowers/Library/CloudStorage/Dropbox/My Mac (Julians-MBP-2)/Downloads/WB_GB105033037810_shapefile"
+
+f_s <- fs::dir_ls(f, regexp = "shp")
+
+p1 <- here::here("/Users/julianflowers/Library/Mobile Documents/com~apple~CloudDocs/Downloads/South_Cambridgeshire")
+
+f1 <- list.files(p1, "gml", full.names = TRUE)
+
+lr <- read_sf(f1)
+
+granta <- sf::read_sf(f_s[1]) 
+
+granta_catch <- sf::read_sf(f_s[2])
+
+
+granta_buffer <- granta |>
+  st_buffer(200)
+
+
+mapview(granta_catch) +
+  mapview(granta) +
+  mapview(granta_buffer)
+
+
+sf::st_intersection(granta_buffer, lr) |>
+  mapview()
+
+```
+
+## Classifications
+
+```{r classifications}
+#| eval: true
+library(rvest)
+url <- "https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810"
+
+read_html(url) |>
+  html_table() %>%
+  .[[1]] |>
+  knitr::kable()
+
+```
+
+```{r, eval=TRUE}
+
+library(myScrapers)
+
+csvs <- myScrapers::get_page_csvs("https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810")
+
+csv <- map(csvs, \(x) paste0("https://environment.data.gov.uk/", x)) 
+
+csv <- map(csv, read_csv)
+
+
+
+```
+
+Classifications
+
+```{r classifications}
+#| eval: true
+library(rvest)
+url <- "https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810"
+
+read_html(url) |>
+  html_table() %>%
+  .[[1]] |>
+  knitr::kable()
+
+
+{r, eval=TRUE}
+
+library(myScrapers)
+
+csvs <- myScrapers::get_page_csvs("https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810")
+
+csv <- map(csvs, \(x) paste0("https://environment.data.gov.uk/", x)) 
+
+csv <- map(csv, read_csv)
+
+```
+
+## Monitoring points in catchment of Granta
+
+```{r, eval=TRUE}
+
+links <- myScrapers::get_page_links("https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810") %>%
+  .[grepl("Monitoring", .)] |>
+  tibble::enframe() |>
+  mutate(link = paste0("https://environment.data.gov.uk", value), 
+         data = purrr::map(link, myScrapers::get_page_csvs)
+         ) |>
+  tidyr::unnest("data") |>
+  mutate(csv = paste0("https://environment.data.gov.uk", data)) |>
+  mutate(site_class = purrr::map(csv, readr::read_csv))
+
+site_class <- links$site_class
+
+```
+
+```{r}
+
+## convert EN to lat lon and add to map
+
+lat_lon <- purrr::map_df(1:19, \(x) srUtils::decimal_from_en(easting = site_class[[x]]$`Site Easting`[1], northing = site_class[[x]]$`Site Northing`[1]))
+
+site_class_sf <- purrr::map(1:19, \(x) lat_lon[x, ] |> sf::st_as_sf(coords = c("long", "lat"), crs = 4326))
+
+site_class_sf |>
+  #head()
+  mapview() +
+  mapview(granta) +
+  mapview(granta_catch)
+
+p1 <- here::here("/Users/julianflowers/Library/Mobile Documents/com~apple~CloudDocs/Downloads/South_Cambridgeshire")
+
+f1 <- list.files(p1, "gml", full.names = TRUE)
+
+lr <- read_sf(f1)
+
+lr <- lr |>
+  mutate(area = st_area(lr))
+
+lr_s <- st_intersection(lr, granta_buffer)
+
+mapview(lr_s, zcol = "area")
+
+
+```
+
+```{r}
+links$site_class[[1]] |>
+  arrange(`Water Body Classification Year`)
+  
+
+```

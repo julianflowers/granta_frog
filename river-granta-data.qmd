@@ -1,0 +1,581 @@
+---
+title: "River Granta data"
+format: 
+   html:
+       toc: true
+       toc-location: right
+author: "Julian Flowers"
+date: "`r Sys.Date()`"
+
+editor: visual
+execute: 
+  cache: false
+  echo: false
+  message: false
+  warning: false
+  eval: false
+---
+
+## Catchment of the River Granta
+
+From <https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810>
+
+```{r granta-catchment, eval=TRUE}
+
+needs(mapview, sf, tidyverse)
+
+mapviewOptions(basemaps = c("OpenStreetMap", "OpenTopoMap"))
+
+f <- "/Users/julianflowers/Library/CloudStorage/Dropbox/My Mac (Julians-MBP-2)/Downloads/WB_GB105033037810_shapefile"
+
+f_s <- fs::dir_ls(f, regexp = "shp")
+
+granta <- sf::read_sf(f_s[1]) 
+
+granta_catch <- sf::read_sf(f_s[2])
+
+granta_buffer <- granta |>
+  st_buffer(200)
+
+#granta |>
+ #write_sf("data/granta.shp")
+
+#granta_catch |>
+  #write_sf("data/granta_catch.shp")
+
+
+mapview(granta_catch, col.regions = "skyblue") +
+  mapview(granta_buffer, col.regions = "darkblue") +
+  mapview(granta) 
+
+```
+
+## Classifications
+
+Environment agency latest classification
+
+## 
+
+```{r classifications}
+#| eval: true
+library(rvest)
+url <- "https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810"
+
+read_html(url) |>
+  html_table() %>%
+  .[[1]] |>
+  knitr::kable()
+```
+
+```{r classifications1, eval=TRUE}
+
+links <- myScrapers::get_page_links("https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810") %>%
+  .[grepl("Monitoring", .)] |>
+  tibble::enframe() |>
+  mutate(link = paste0("https://environment.data.gov.uk", value), 
+         data = purrr::map(link, myScrapers::get_page_csvs)
+         ) |>
+  tidyr::unnest("data") |>
+  mutate(csv = paste0("https://environment.data.gov.uk", data)) |>
+  mutate(site_class = purrr::map(csv, readr::read_csv))
+
+site_class <- links$site_class
+
+```
+
+## Monitoring points
+
+```{r monitoring-points, eval = TRUE}
+## convert EN to lat lon and add to map
+
+lat_lon <- purrr::map_df(1:19, \(x) srUtils::decimal_from_en(easting = site_class[[x]]$`Site Easting`[1], northing = site_class[[x]]$`Site Northing`[1]))
+
+site_class_sf <- purrr::map(1:19, \(x) lat_lon[x, ] |> sf::st_as_sf(coords = c("long", "lat"), crs = 4326))
+
+site_class_sf |>
+  list_rbind() |>
+  st_as_sf() |>
+  write_sf("data/granta_monitoring.shp")
+
+site_class_sf |>
+  #head()
+  mapview(col.regions = "red") +
+  mapview(granta) +
+  mapview(granta_catch, col.regions = "skyblue")
+
+
+```
+
+```{r download-csv, eval=TRUE}
+
+library(myScrapers)
+
+csvs <- myScrapers::get_page_csvs("https://environment.data.gov.uk/catchment-planning/WaterBody/GB105033037810")
+
+csv <- map(csvs, \(x) paste0("https://environment.data.gov.uk/", x)) 
+
+csv <- map(csv, read_csv)
+
+
+```
+
+## River fly monitoring results
+
+```{r riverfly, eval=TRUE}
+
+needs(readxl)
+
+riverfly <- read_xlsx("/Users/julianflowers/Library/CloudStorage/Dropbox/My Mac (Julians-MBP-2)/Downloads/Data Explorer  Riverflies.xlsx", skip = 1)
+
+riverfly_sf <- riverfly |>
+  st_as_sf(coords = c("Long", "Lat"), crs = 4326) |>
+  st_transform(27700) |>
+  st_intersection(granta_catch)
+
+#riverfly_sf |>
+  #write_sf("data/granta_riverfly.shp")
+
+riverfly_sf |>
+  mapview(cex = "Record.Score", zcol = "Site") +
+  mapview(granta) +
+  mapview(granta_catch, col.regions = "skyblue")
+
+
+```
+
+```{r}
+
+riverfly |>
+  filter(str_detect(River, "Gra")) |>
+  ggplot(aes(dmy(Date), `Record Score`, colour = Site)) +
+  geom_point() +
+  geom_line() + 
+  geom_line(aes(dmy(Date), `Threshold on date`, colour = Site, lty = "dashed")) +
+  facet_wrap(~ Site) +
+  theme(strip.text = element_text(size = 10), legend.position = "")
+  
+```
+
+## Abstraction points and data
+
+<https://environment.maps.arcgis.com/apps/webappviewer/index.html?id=c9176c299b734cff9a6deffcf7f40a4e>
+
+```{r abstraction, eval = TRUE}
+
+abstraction <- data.frame(
+  
+  name = c("Bartlow Estate", "TB Fairey", "RW Franklin", "Cheveley Park Farms", "Babraham Institute"), 
+  lon = c(0.3084, 0.2911, 0.2547, 0.2094, 0.205), 
+  lat = c(52.0776, 52.093, 52.1196, 52.1246, 52.1345),
+  max_daily_m3 = c(682, 373, 1016, 7528, 546), 
+  max_annual_m3 = c(36364, 20830, 30000, 186832, 136000), 
+  source = c("Groundwater", "Surface water", "Groundwater", "Surface water", "Groundwater")
+  
+)
+
+abstraction_sf <- st_as_sf(abstraction, coords = c("lon", "lat"), crs = 4326)
+
+abstraction_sf |>
+  write_sf("data/abstraction_points.shp")
+
+mapview(abstraction_sf, cex = "max_annual_m3", legend = FALSE) +
+  mapview(granta) +
+  mapview(granta_catch, col.regions = "skyblue", homebutton = TRUE)
+
+
+```
+
+## Catchment rainfall
+
+Use HAD 1km gridded daily rainfall data available 1869 - 2021 from the Met Office and calculate average rainfall across whole catchment
+
+<https://data.ceda.ac.uk/badc/ukmo-hadobs/data/insitu/MOHC/HadOBS/HadUK-Grid/v1.1.0.0/1km/rainfall/day/>
+
+```{r rainfall, eval=TRUE, cache=TRUE}
+
+needs(stars, raster, fs, furrr, qicharts2)
+seed = furrr_options(seed = 123)
+
+p <- here::here("/Volumes/JF2/rainfall_data")
+
+nc <- dir_ls(p)
+r1 <- raster::stack(nc)
+
+get_daily_rainfall <- function(raster){
+  
+  crop(raster, granta_catch) |>
+  values() |>
+  na.omit() |>
+  mean()
+  
+}
+
+date <- seq.Date(from = as.Date("2017-01-01"), to = as.Date("2022-12-31"), by = "day")
+
+
+daily_rain <- future_map_dbl(1:length(date), \(x) get_daily_rainfall(r1[[x]]) |> round(2), .options = seed, .progress = TRUE)
+
+rain_day <- data.frame(date, daily_rain)
+
+rain_day |> 
+  write_csv("data/granta_rain.csv")
+
+rain_sum <- data.frame(date, daily_rain) |>
+  mutate(yearmon = zoo::as.yearmon(date)) |>
+  group_by(yearmon) |>
+  summarise(rain_month = sum(daily_rain)) 
+
+qicharts2::qic(x = rain_sum$yearmon, y = rain_sum$rain_month, chart = "c", print.summary = TRUE, method = "bestbox", part = 50)
+
+rain_sum |>
+  ggplot(aes(yearmon, rain_month)) +
+  geom_line() +
+  geom_smooth(method = "loess", span = 0.3) +
+  ggthemes::theme_economist() +
+  zoo::scale_x_yearmon(n = 10) +
+  labs(y = "Monthly rainfall (mm)", 
+       title = "Monthly rainfall in Granta Catchment", 
+       x = "") 
+  
+```
+
+## River levels
+
+Data from <https://nrfa.ceh.ac.uk/data/station/download?stn=33066&dt=cdr>
+
+```{r}
+## granta river data from https://nrfa.ceh.ac.uk/data/station/download?stn=33066&dt=cdr
+## linton min / max levels and daily flow rates
+theme_set(ggthemes::theme_economist())
+
+library(fs); library(qicharts2)
+dir <- here::here("~/Downloads")
+
+f <- list.files(dir, "csv", full.names = TRUE)
+
+f
+
+water_sheets <- map(f[c(33, 35)], read_csv)
+
+ws_flow <- water_sheets[[1]] |>
+  group_by(yearmon = zoo::as.yearmon(date)) |>
+  summarise(mean = mean(value, na.rm = TRUE),
+            min = min(value, na.rm = TRUE),
+            max = max(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE)) |>
+  ungroup() |>
+  mutate(grand_mean = mean(mean, na.rm = TRUE),
+         s = mean(sd, na.rm = TRUE)) |>
+  drop_na()
+
+qicharts2::qic(x = yearmon, y = mean, data = ws_flow, chart = "c", print.summary = TRUE)
+
+ws |>
+  ggplot(aes(yearmon, mean)) +
+  geom_point() +
+  geom_smooth(method = "loess", span = 0.2) +
+  geom_hline(yintercept = ws$grand_mean, colour = "red") +
+  labs(title = "Mean monthly minimum river level at Linton monitoring point")
+  
+
+```
+
+```{r}
+
+map(1:2, \(x) range(water_sheets[[x]]$date))
+
+plots <- map(1:2, \(x) water_sheets[[x]] |> 
+               ggplot(aes(date, value)) + 
+               geom_line() + 
+               ggtitle(water_sheets[[x]]$measure, 
+                       subtitle = paste(range(water_sheets[[x]]$date)[1], "to", range(water_sheets[[x]]$date)[2])) )
+
+plots[[1]] +
+  geom_smooth(method = "gam")
+
+
+```
+
+## River flow
+
+Data via EA Hydrology API on instantaneous flow and water levels based on 15 minute readings.
+
+<http://environment.data.gov.uk/hydrology>
+
+```{r flow-and-level, eval=TRUE}
+
+library(patchwork)
+
+linton_inst_flow <- jsonlite::fromJSON("https://environment.data.gov.uk/hydrology/id/measures/ecf7d51a-1308-44fd-aaf6-7d2292332eac-flow-i-900-m3s-qualified/readings?mineq-date=2017-01-01&_limit=300000")
+
+linton_inst_level <- jsonlite::fromJSON("https://environment.data.gov.uk/hydrology/id/measures/ecf7d51a-1308-44fd-aaf6-7d2292332eac-level-i-900-m-qualified/readings?mineq-date=2017-01-01&_limit=300000")
+
+linton_15_flow_level <- bind_cols(linton_inst_flow$items, linton_inst_level$items)
+   
+#linton_15_flow_level |>
+ # write_csv("data/linton_flow_level.csv")
+
+linton_15_flow_level <- linton_15_flow_level |>
+  dplyr::select(flow = value...4, level = value...9, date = date...2, datatime = dateTime...3)
+
+linton_daily_flow_level <- linton_15_flow_level |>
+  group_by(date) |> 
+  summarise(mean_flow = mean(flow), 
+            sd_flow = sd(flow), 
+            mean_level = mean(level), 
+            sd_level = sd(level), 
+            min_flow = min(flow), 
+            max_flow = max(flow), 
+            min_level = min(level), 
+            max_level = max(level), 
+            level_range = max_level - min_level, 
+            flow_range = max_flow - min_flow)
+
+flow_level <- linton_daily_flow_level |>
+  ggplot(aes(level_range, flow_range)) +
+  geom_point() +
+  geom_smooth()
+
+linton_daily_flow_level <- linton_daily_flow_level |>
+  dplyr::mutate(new_date = lubridate::ymd(date)) 
+
+#max(linton_daily_flow_level$new_date)
+
+df <- linton_daily_flow_level |>
+  ggplot(aes(new_date, mean_flow)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", span = 0.3) 
+
+dl <- linton_daily_flow_level |>
+  filter(mean_level >= 0) |>
+  ggplot(aes(new_date, mean_level)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", span = 0.3) 
+
+flow_level + (df / dl )
+
+```
+
+## Create time series and TSLM model
+
+```{r models, eval=TRUE}
+
+needs(tsibble, fable)
+options(scipen = 999)
+
+linton_ts <- linton_daily_flow_level |>
+  left_join(rain_day, by = c("new_date" = "date")) |>
+  mutate(trend = row_number(), 
+         season = month(new_date)) |>
+  as_tsibble(index = new_date)
+
+linton_fit <- linton_ts |>
+  drop_na(daily_rain) |>
+  model(fit_0 = TSLM(min_level ~ 1),
+        fit = TSLM(min_level ~ trend()),
+        fit0 = TSLM(min_level ~ trend() + season()),
+        fit1 = TSLM(min_level ~ trend() + season() + max_flow + sd_flow + mean_flow + min_flow),
+        fit2 = TSLM(min_level ~ trend() + season() + max_flow + sd_flow + mean_flow + min_flow + daily_rain))
+
+linton_fit %>% 
+  accuracy() %>% 
+  arrange(RMSE)
+
+tidy(linton_fit) |>
+  filter(.model %in% c("fit_0", "fit2")) |>
+  mutate_if(is.numeric, round, 4) |>
+  gt::gt()
+
+
+linton_fit |>
+  augment() |> 
+  filter(.model == "fit2") |>
+  ggplot() +
+  geom_point(aes(min_level, .fitted)) +
+  geom_smooth(aes(min_level, .fitted)) 
+
+
+
+```
+
+Gauged daily flow
+
+<https://nrfa.ceh.ac.uk/data/station/download?stn=33066&dt=gdf>
+
+Also realtime flow
+
+<https://nrfa.ceh.ac.uk/data/station/liveData/33066>
+
+```{r}
+
+## flow
+
+ws2 <- water_sheets[[2]] |>
+  mutate(yearmon = zoo::as.yearmon(date)) |>
+  group_by(yearmon) |>
+  summarise(mean_flow = mean(value))
+
+ws |>
+  left_join(ws2) |>
+  drop_na(mean_flow)|>
+  ggplot() +
+  geom_point(aes(log(mean), log(mean_flow))) +
+  geom_smooth(aes(log(mean), log(mean_flow)))
+
+```
+
+## Property boundaries
+
+```{r land-registry, eval=TRUE}
+
+lr_data <- read_sf("/Users/julianflowers/Library/Mobile Documents/com~apple~CloudDocs/Downloads/South_Cambridgeshire (1)/Land_Registry_Cadastral_Parcels.gml")
+
+parish_boundaries <- read_sf("https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Parishes_December_2016_FCB_in_England_and_Wales_2022/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson")
+
+linton_cp <- parish_boundaries |>
+  filter(str_detect(par16nm, "Linton")) %>%
+  .[3,]
+
+riverside <- st_intersection(lr_data, granta |> st_buffer(100)) |>
+  st_intersection(st_transform(linton_cp, 27700))
+
+riverside |>
+  mapview(col.regions = "skyblue")
+
+riverside_bbox <- st_bbox(st_transform(riverside, crs = 4326))
+
+```
+
+## Landcover
+
+```{r os-landcover, eval=TRUE}
+
+base_url <- "https://api.os.uk/features/ngd/ofa/v1/collections/lnd-fts-land-1/items"
+key <- "QQfpQgnuiTQLA3fErTbffq8G4VOGdP6b"
+bbox <- riverside_bbox 
+offset <- seq(0, 13000, by = 100)
+
+os_ngd_api_call_1 <- function(bbox, key, offset) {
+
+  bbox <- st_bbox(bbox) |>
+    paste0(collapse = ",")
+  api_call <- glue::glue(base_url, "?bbox=", bbox, "&key=", key, "&limit=100&offset=", offset)
+  os_lc <- geojsonsf::geojson_sf(api_call) 
+  out <- list(os_lc = os_lc, url = api_call)
+
+}
+
+library(furrr)
+seed <- furrr_options(seed = 123)
+plan(multisession)
+safe_api <- safely(os_ngd_api_call_1, otherwise = NA_real_)
+
+os3 <- future_map(.x = 1:50, \(x) safe_api(bbox = bbox, key = key, offset = offset[x]), .progress = TRUE, .options = seed)
+
+tf_map <- map(os3, c("result", "os_lc"))
+
+tf_map_l <- tf_map |>
+  list_rbind() |>
+  st_as_sf() |>
+  st_transform(27700)
+
+st_intersection(riverside, tf_map_l) |>
+  mapview(zcol = "description") +
+  mapview(granta)
+
+```
+
+
+```{r flow-gam, eval = FALSE}
+
+library(mgcv)
+
+model_data <- ws |>
+  left_join(ws2) |>
+  left_join(rain_sum) |>
+  drop_na(rain_month) |>
+  mutate(index = as.numeric(yearmon) - 2017)
+  
+
+mod <- gam(mean_flow ~ s(index) + s(rain_month) + s(mean), data = model_data)
+
+plot(mod, pages = "all")
+
+```
+
+## max level
+
+```{r max-level}
+
+ws_23 <-  
+  filter(date >= "2023-01-01")
+
+full_join(ws_flow_23, ws_23, by = c("date", "dateTime")) |>
+  ggplot(aes(value.x, value.y)) +
+  geom_point() +
+  geom_smooth() +
+  labs(x = "flow",
+       y = "max level")
+
+qicharts2::qic(data = ws_23, y = value, x = date, chart = "i", decimals = 2, freeze = 120, title = "max level")
+qicharts2::qic(data = ws_flow_23, y = value, x = date, chart = "i", decimals = 2, freeze = 120, title = "flow")
+
+
+```
+
+## Standardised rain and flow
+
+```{r spi , eval=TRUE}
+
+p <- here::here("data")
+
+csv <- fs::dir_ls(p, regexp = "csv")
+
+spi <- map(3:5, \(x) read_csv(csv[x], skip = 7))
+
+spi_df <- purrr::list_rbind(spi) |>
+  mutate(station = rep(c("Stapleford", "Babraham", "Linton"),  each = 1590, length.out = 4770))
+             
+library(lubridate)    
+
+spi_df |>
+  mutate(date = paste0(month, "-01"), 
+         date = ymd(date)) |>
+  filter(date >= "1960-01-01") |>
+  ggplot() +
+  #geom_point(aes(date, `spi-1`)) +
+  geom_smooth(aes(date, `spi-24`, group = station, colour = station), se = FALSE, lwd = 0.6) +
+  geom_line(aes(date, `spi-24`, group = station)) +
+  facet_wrap(~ station) +
+  ggtitle("Catchment SPI")
+
+
+```
+
+```{r ssi, eval=TRUE}
+
+sfi <- map(6:8, \(x) read_csv(csv[x], skip = 7))
+
+station <-  c("Stapleford", "Babraham", "Linton")
+
+sfi[[1]]
+
+
+sfi_df <- map_dfr(.x = 1:3, \(x) sfi[[x]] |> mutate(station = station[x]))
+
+
+sfi_df |>
+  mutate(date = paste0(month, "-01"), 
+         date = ymd(date)) |>
+  filter(date >= "1960-01-01") |>
+  ggplot() +
+  #geom_point(aes(date, `spi-1`)) +
+  geom_smooth(aes(date, `ssi-24`, group = station, colour = station), se = FALSE, lwd = 0.6) +
+  geom_line(aes(date, `ssi-24`, group = station)) +
+  facet_wrap(~ station) +
+  ggtitle("Catchment SSI")
+
+
+
+```
+
